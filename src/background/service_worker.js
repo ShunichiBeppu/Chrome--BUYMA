@@ -54,8 +54,38 @@ function broadcastState() {
       error: state.error,
     },
   };
-  // ポップアップに送信（開いていない場合はエラーを無視）
   chrome.runtime.sendMessage(payload).catch(() => {});
+}
+
+// ── Content Script注入 ──
+// タブにContent Scriptが読み込まれていない場合に備え、明示的に注入する
+async function injectContentScript(tabId, scriptFiles) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: scriptFiles,
+    });
+  } catch (err) {
+    // 既に注入済みの場合もエラーになることがあるので無視
+    console.log(`[BUYMA] スクリプト注入（既存の場合はスキップ）: ${err.message}`);
+  }
+}
+
+// メッセージ送信（リトライ付き）
+async function sendMessageToTab(tabId, message, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, message);
+      return response;
+    } catch (err) {
+      if (i < maxRetries - 1) {
+        console.log(`[BUYMA] メッセージ送信リトライ (${i + 1}/${maxRetries}): ${err.message}`);
+        await wait(1000);
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 // ── メッセージハンドラ ──
@@ -108,13 +138,20 @@ async function handleStart() {
 
     state.sheetsTabId = sheetsTabs[0].id;
 
-    // Sheetsから未着手行を取得
-    const response = await chrome.tabs.sendMessage(state.sheetsTabId, {
+    // Sheetsタブに Content Script を注入
+    await injectContentScript(state.sheetsTabId, [
+      'utils/constants.js',
+      'content_scripts/sheets.js',
+    ]);
+    await wait(500);
+
+    // Sheetsから対象行を取得
+    const response = await sendMessageToTab(state.sheetsTabId, {
       type: MSG.GET_ROWS,
     });
 
     if (!response || !response.rows || response.rows.length === 0) {
-      setState({ status: 'error', error: '未着手の行が見つかりません' });
+      setState({ status: 'error', error: '対象行（●）が見つかりません' });
       return;
     }
 
@@ -126,7 +163,6 @@ async function handleStart() {
 
     console.log(`[BUYMA] ${response.rows.length}件のジョブを取得`);
 
-    // 最初のジョブを処理
     processNextJob();
   } catch (err) {
     console.error('[BUYMA] 開始エラー:', err);
@@ -163,17 +199,20 @@ async function processNextJob() {
     // タブの読み込み完了を待つ
     await waitForTabLoad(tab.id);
 
-    // 少し待機してDOMの安定化を待つ
+    // BUYMAタブに Content Script を注入
+    await injectContentScript(tab.id, [
+      'utils/constants.js',
+      'content_scripts/buyma.js',
+    ]);
     await wait(2000);
 
-    // フォーム入力を指示
-    await chrome.tabs.sendMessage(tab.id, {
+    // フォーム入力を指示（リトライ付き）
+    await sendMessageToTab(tab.id, {
       type: MSG.FILL_FORM,
       data: job,
     });
   } catch (err) {
     console.error(`[BUYMA] ジョブ処理エラー:`, err);
-    // エラーの行はスキップして次へ
     setState({ error: `行${job.rowIndex + 1}: ${err.message}` });
     state.currentIndex++;
     setTimeout(() => processNextJob(), 1000);
@@ -184,14 +223,12 @@ async function processNextJob() {
 function handleFillComplete() {
   console.log('[BUYMA] フォーム入力完了 → プレビュー待ち');
   setState({ status: 'paused' });
-  // ページ遷移の監視はonUpdatedリスナーで行う
 }
 
 // ── フォーム入力エラー ──
 function handleFillError(error) {
   console.error('[BUYMA] フォーム入力エラー:', error);
   setState({ error: `行${state.jobs[state.currentIndex]?.rowIndex + 1}: ${error}` });
-  // エラーの行をスキップして次へ
   state.currentIndex++;
   setTimeout(() => processNextJob(), 1000);
 }
@@ -202,7 +239,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (state.status !== 'paused') return;
   if (changeInfo.url === undefined) return;
 
-  // 出品ページから離れた = 送信/保存完了
   if (!changeInfo.url.startsWith(BUYMA_SELL_PATTERN)) {
     console.log('[BUYMA] ページ遷移検知 → 完了処理');
     handleItemCompleted();
@@ -224,12 +260,19 @@ async function handleItemCompleted() {
   const job = state.jobs[state.currentIndex];
 
   try {
-    // Sheetsのステータスを「完了」に更新
-    await chrome.tabs.sendMessage(state.sheetsTabId, {
+    // Sheetsタブに Content Script を再注入（タブが裏にいた間に失われた場合の対策）
+    await injectContentScript(state.sheetsTabId, [
+      'utils/constants.js',
+      'content_scripts/sheets.js',
+    ]);
+    await wait(500);
+
+    // Sheetsのステータスを「出品済み」に更新
+    await sendMessageToTab(state.sheetsTabId, {
       type: MSG.UPDATE_STATUS,
       rowIndex: job.rowIndex,
     });
-    console.log(`[BUYMA] 行${job.rowIndex + 1}のステータスを完了に更新`);
+    console.log(`[BUYMA] 行${job.rowIndex + 1}のステータスを出品済みに更新`);
   } catch (err) {
     console.error('[BUYMA] ステータス更新エラー:', err);
   }
@@ -237,7 +280,6 @@ async function handleItemCompleted() {
   state.currentIndex++;
   state.buymaTabId = null;
 
-  // 少し待機してから次のジョブへ
   setTimeout(() => processNextJob(), 1000);
 }
 
