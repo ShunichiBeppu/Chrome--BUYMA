@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "BUYMA 出品自動化",
+  "version": "1.0.0",
+  "description": "Googleスプレッドシートの商品一覧からBUYMA出品を自動化するChrome拡張",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.google.com/*",
+    "https://www.buyma.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://docs.google.com/spreadsheets/*"],
+      "js": ["utils/constants.js", "content_scripts/sheets.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.buyma.com/my/sell/*"],
+      "js": ["utils/constants.js", "content_scripts/buyma.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "BUYMA 出品自動化"
+  }
+}

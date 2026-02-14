@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>BUYMA 出品自動化</h1>
+
+    <div id="status-area">
+      <span id="status-label" class="status idle">待機中</span>
+    </div>
+
+    <div id="progress-area" class="hidden">
+      <div class="progress-text">
+        <span id="progress-current">0</span> / <span id="progress-total">0</span> 件完了
+      </div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+    </div>
+
+    <div id="error-area" class="hidden">
+      <p id="error-message" class="error-message"></p>
+    </div>
+
+    <div class="button-area">
+      <button id="btn-start" class="btn btn-start">開始</button>
+      <button id="btn-stop" class="btn btn-stop hidden">停止</button>
+    </div>
+  </div>
+
+  <script src="../utils/constants.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
